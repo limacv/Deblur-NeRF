@@ -1,0 +1,10 @@
+numpy
+scikit-image
+torch>=1.8
+torchvision>=0.9.1
+imageio
+imageio-ffmpeg
+matplotlib
+configargparse
+tensorboardX>=2.0
+opencv-python

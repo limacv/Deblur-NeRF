@@ -1,0 +1,24 @@
+num_gpu = 1
+expname = defocustools1_naive
+basedir = /apdcephfs/private_leema/data/NeRF/logs_exp
+datadir = /apdcephfs/private_leema/data/NeRF/defocustools
+tbdir = /apdcephfs/private_leema/data/NeRF/tensorboard_exp
+dataset_type = llff
+
+factor = 4
+llffhold = 7
+
+N_rand = 1024
+N_samples = 64
+N_importance = 64
+N_iters = 200000
+lrate = 5e-4
+lrate_decay = 250
+
+use_viewdirs = True
+raw_noise_std = 1e0
+rgb_activate = sigmoid
+
+kernel_type = none
+
+render_rmnearplane = 30

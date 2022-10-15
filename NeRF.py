@@ -5,7 +5,6 @@ import os
 import imageio
 import time
 
-
 def init_linear_weights(m):
     if isinstance(m, nn.Linear):
         if m.weight.shape[0] in [2, 3]:

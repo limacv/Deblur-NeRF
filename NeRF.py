@@ -4,6 +4,8 @@ from run_nerf_helpers import *
 import os
 import imageio
 import time
+import svox2
+
 
 def init_linear_weights(m):
     if isinstance(m, nn.Linear):
@@ -215,23 +217,45 @@ class NeRFAll(nn.Module):
         self.output_ch = 5 if args.N_importance > 0 else 4
 
         skips = [4]
-        self.mlp_coarse = NeRF(
-            D=args.netdepth, W=args.netwidth,
-            input_ch=self.input_ch, output_ch=self.output_ch, skips=skips,
-            input_ch_views=self.input_ch_views, use_viewdirs=args.use_viewdirs)
+        if args.plenoxel:
+            
+            assert torch.cuda.is_available()
+            
 
-        self.mlp_fine = None
-        if args.N_importance > 0:
-            self.mlp_fine = NeRF(
-                D=args.netdepth_fine, W=args.netwidth_fine,
+            import alexyu_svox2_llff_dataset as svox_llff
+            import json
+
+            reso_list = json.load(args.reso)
+            #temporary
+            dset = svox_llff.LLFFDataset(args.datadir,split='train')
+
+            self.plenoxel = svox2.SparseGrid(reso=reso_list[0],
+                                             center=dset.scene_center,
+                                             radius=dset.scene_radius,
+                                             use_sphere_bound=False,
+                                             basis_dim=9,
+                                             use_z_order=True,
+                                             device='cuda',
+                                             basis_type=svox2.__dict__['BASIS_TYPE_SH'])
+            
+        else:
+            self.mlp_coarse = NeRF(
+                D=args.netdepth, W=args.netwidth,
                 input_ch=self.input_ch, output_ch=self.output_ch, skips=skips,
                 input_ch_views=self.input_ch_views, use_viewdirs=args.use_viewdirs)
 
-        activate = {'relu': torch.relu, 'sigmoid': torch.sigmoid, 'exp': torch.exp, 'none': lambda x: x,
-                    'sigmoid1': lambda x: 1.002 / (torch.exp(-x) + 1) - 0.001,
-                    'softplus': lambda x: nn.Softplus()(x - 1)}
-        self.rgb_activate = activate[args.rgb_activate]
-        self.sigma_activate = activate[args.sigma_activate]
+            self.mlp_fine = None
+            if args.N_importance > 0:
+                self.mlp_fine = NeRF(
+                    D=args.netdepth_fine, W=args.netwidth_fine,
+                    input_ch=self.input_ch, output_ch=self.output_ch, skips=skips,
+                    input_ch_views=self.input_ch_views, use_viewdirs=args.use_viewdirs)
+
+            activate = {'relu': torch.relu, 'sigmoid': torch.sigmoid, 'exp': torch.exp, 'none': lambda x: x,
+                        'sigmoid1': lambda x: 1.002 / (torch.exp(-x) + 1) - 0.001,
+                        'softplus': lambda x: nn.Softplus()(x - 1)}
+            self.rgb_activate = activate[args.rgb_activate]
+            self.sigma_activate = activate[args.sigma_activate]
         self.tonemapping = ToneMapping(args.tone_mapping_type)
 
     def mlpforward(self, inputs, viewdirs, mlp, netchunk=1024 * 64):

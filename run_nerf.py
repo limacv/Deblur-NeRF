@@ -213,6 +213,19 @@ def config_parser():
     parser.add_argument("--i_video", type=int, default=20000,
                         help='frequency of render_poses video saving')
 
+
+    ################## Plenoxel options ########################
+
+    parser.add_argument("--plenoxel",
+                        action='store_true',
+                        help='use plenoxel instead of vanilla nerf')
+    parser.add_argument('--reso',
+                        type=str,
+                        default="[[256, 256, 256], [512, 512, 512]]",
+                        help='List of grid resolution (will be evaled as json);'
+                             'resamples to the next one every upsamp_every iters, then ' +
+                             'stays at the last one; ' +
+                             'should be a list where each item is a list of 3 ints or an int')
     return parser
 
 

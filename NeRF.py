@@ -237,6 +237,8 @@ class NeRFAll(nn.Module):
                                              use_z_order=True,
                                              device='cuda',
                                              basis_type=svox2.__dict__['BASIS_TYPE_SH'])
+            del dset
+
             
         else:
             self.mlp_coarse = NeRF(
@@ -338,7 +340,7 @@ class NeRFAll(nn.Module):
             rgb_map = rgb_map + (1. - acc_map[..., None])
 
         return rgb_map, density, acc_map, weights, depth_map
-
+    
     def render_rays(self,
                     ray_batch,
                     N_samples,
@@ -460,19 +462,23 @@ class NeRFAll(nn.Module):
 
                 # time0 = time.time()
                 new_rays, weight, align_loss = self.kernelsnet(H, W, K, rays, rays_info)
+                
                 ray_num, pt_num = new_rays.shape[:2]
 
                 # time1 = time.time()
-                rgb, depth, acc, extras = self.render(H, W, K, chunk, new_rays.reshape(-1, 3, 2), **kwargs)
+                rgb, depth, _ , extras = self.render(H, W, K, chunk, new_rays.reshape(-1, 3, 2), **kwargs)
                 rgb_pts = rgb.reshape(ray_num, pt_num, 3)
-                rgb0_pts = extras['rgb0'].reshape(ray_num, pt_num, 3)
-
+                
                 # time2 = time.time()
                 rgb = torch.sum(rgb_pts * weight[..., None], dim=1)
-                rgb0 = torch.sum(rgb0_pts * weight[..., None], dim=1)
                 rgb = self.tonemapping(rgb)
-                rgb0 = self.tonemapping(rgb0)
 
+                if 'rgb0' in extras:
+                    rgb0_pts = extras['rgb0'].reshape(ray_num, pt_num, 3)
+                    rgb0 = torch.sum(rgb0_pts * weight[..., None], dim=1)
+                    rgb0 = self.tonemapping(rgb0)
+                else: rgb0 = None
+                
                 # time3 = time.time()
                 # print(f"Time| kernel: {time1-time0:.5f}, nerf: {time2-time1:.5f}, fuse: {time3-time2}")
 
@@ -542,29 +548,35 @@ class NeRFAll(nn.Module):
         # Create ray batch
         rays_o = torch.reshape(rays_o, [-1, 3]).float()
         rays_d = torch.reshape(rays_d, [-1, 3]).float()
+        
+        if self.is_plenoxel():
+            svox2_rays = svox2.Rays(rays_o,rays_d)
+            rgb_map = self.plenoxel.volume_render(svox2_rays)
+            return rgb_map, None , None , {'rgb0':None}
+            #[IMPLEMENT HERE]
+        else:
+            near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
+            rays = torch.cat([rays_o, rays_d, near, far], -1)
+            if use_viewdirs:
+                rays = torch.cat([rays, viewdirs], -1)
 
-        near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
-        rays = torch.cat([rays_o, rays_d, near, far], -1)
-        if use_viewdirs:
-            rays = torch.cat([rays, viewdirs], -1)
+            # Batchfy and Render and reshape
+            all_ret = {}
+            for i in range(0, rays.shape[0], chunk):
+                ret = self.render_rays(rays[i:i + chunk], **kwargs)
+                for k in ret:
+                    if k not in all_ret:
+                        all_ret[k] = []
+                    all_ret[k].append(ret[k])
+            all_ret = {k: torch.cat(all_ret[k], 0) for k in all_ret}
 
-        # Batchfy and Render and reshape
-        all_ret = {}
-        for i in range(0, rays.shape[0], chunk):
-            ret = self.render_rays(rays[i:i + chunk], **kwargs)
-            for k in ret:
-                if k not in all_ret:
-                    all_ret[k] = []
-                all_ret[k].append(ret[k])
-        all_ret = {k: torch.cat(all_ret[k], 0) for k in all_ret}
+            for k in all_ret:
+                k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
+                all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
-        for k in all_ret:
-            k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
-            all_ret[k] = torch.reshape(all_ret[k], k_sh)
-
-        k_extract = ['rgb_map', 'depth_map', 'acc_map']
-        ret_list = [all_ret[k] for k in k_extract]
-        ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
+            k_extract = ['rgb_map', 'depth_map', 'acc_map']
+            ret_list = [all_ret[k] for k in k_extract]
+            ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
         return ret_list + [ret_dict]
 
     def render_path(self, H, W, K, chunk, render_poses, render_kwargs, render_factor=0, ):
@@ -656,3 +668,6 @@ class NeRFAll(nn.Module):
         weights = torch.stack(weights, 0)
 
         return rgbs, depths, weights
+    
+    def is_plenoxel(self):
+        return hasattr(self,'plenoxel')

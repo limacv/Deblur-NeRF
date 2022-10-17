@@ -225,9 +225,9 @@ class NeRFAll(nn.Module):
             import alexyu_svox2_llff_dataset as svox_llff
             import json
 
-            reso_list = json.load(args.reso)
+            reso_list = json.loads(args.reso)
             #temporary
-            dset = svox_llff.LLFFDataset(args.datadir,split='train')
+            dset = svox_llff.LLFFDataset(args.datadir,split='train',device='cuda')
 
             self.plenoxel = svox2.SparseGrid(reso=reso_list[0],
                                              center=dset.scene_center,
@@ -451,7 +451,7 @@ class NeRFAll(nn.Module):
         # training
         if self.training:
             assert rays is not None, "Please specify rays when in the training mode"
-
+            
             force_baseline = kwargs.pop("force_naive", True)
             # kernel mode, run multiple rays to get result of one ray
             if self.kernelsnet is not None and not force_baseline:
@@ -473,12 +473,12 @@ class NeRFAll(nn.Module):
                 rgb = torch.sum(rgb_pts * weight[..., None], dim=1)
                 rgb = self.tonemapping(rgb)
 
-                if 'rgb0' in extras:
+                if extras.get('rgb0',None) is not None:
                     rgb0_pts = extras['rgb0'].reshape(ray_num, pt_num, 3)
                     rgb0 = torch.sum(rgb0_pts * weight[..., None], dim=1)
                     rgb0 = self.tonemapping(rgb0)
                 else: rgb0 = None
-                
+
                 # time3 = time.time()
                 # print(f"Time| kernel: {time1-time0:.5f}, nerf: {time2-time1:.5f}, fuse: {time3-time2}")
 
@@ -491,8 +491,11 @@ class NeRFAll(nn.Module):
                 return rgb, rgb0, other_loss
             else:
                 rgb, depth, acc, extras = self.render(H, W, K, chunk, rays, **kwargs)
-                return self.tonemapping(rgb), self.tonemapping(extras['rgb0']), {}
-
+                rgb0 = extras['rgb0']
+                if rgb0 is not None:
+                    return self.tonemapping(rgb), self.tonemapping(rgb0), {}
+                else:
+                    return self.tonemapping(rgb), None, {}
         #  evaluation
         else:
             assert poses is not None, "Please specify poses when in the eval model"

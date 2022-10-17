@@ -10,6 +10,7 @@ from load_llff import load_llff_data
 from run_nerf_helpers import *
 from metrics import compute_img_metric
 
+import tqdm
 
 
 # np.random.seed(0)
@@ -338,7 +339,7 @@ def train():
 
     # Create nerf model
     nerf = NeRFAll(args, kernelnet)
-    nerf = nn.DataParallel(nerf, list(range(args.num_gpu)))
+#    nerf = nn.DataParallel(nerf, list(range(args.num_gpu)))
 
     optim_params = nerf.parameters()
 
@@ -517,7 +518,7 @@ def train():
     # writer = SummaryWriter(os.path.join(basedir, 'summaries', expname))
 
     start = start + 1
-    for i in range(start, N_iters):
+    for i in tqdm.tqdm(range(start, N_iters)):
         time0 = time.time()
 
         # Sample random ray batch
@@ -542,13 +543,14 @@ def train():
 
         # Compute Losses
         # =====================
+        
         target_rgb = iter_data['rgbsf'].squeeze(-2)
         img_loss = img2mse(rgb, target_rgb)
         loss = img_loss
         psnr = mse2psnr(img_loss)
-
-        img_loss0 = img2mse(rgb0, target_rgb)
-        loss = loss + img_loss0
+        if rgb0 is not None:
+            img_loss0 = img2mse(rgb0, target_rgb)
+            loss = loss + img_loss0
 
         extra_loss = {k: torch.mean(v) for k, v in extra_loss.items()}
         if len(extra_loss) > 0:
@@ -556,7 +558,8 @@ def train():
                 if f"kernel_{k}_weight" in vars(args).keys():
                     if vars(args)[f"{k}_start_iter"] <= i <= vars(args)[f"{k}_end_iter"]:
                         loss = loss + v * vars(args)[f"kernel_{k}_weight"]
-
+        #import pdb;pdb.set_trace()
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

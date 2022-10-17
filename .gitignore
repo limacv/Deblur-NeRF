@@ -5,5 +5,8 @@
 *.npy
 *.npz
 *.dae
+*.tar
+
 data/*
 logs/*
+log/*

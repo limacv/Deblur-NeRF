@@ -1,6 +1,7 @@
 import numpy as np
 import os, imageio
 
+import tqdm
 
 ########## Slightly modified version of LLFF data loading code 
 ##########  see https://github.com/Fyusion/LLFF for original
@@ -99,7 +100,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         else:
             return imageio.imread(f)
 
-    imgs = imgs = [imread(f)[..., :3] / 255. for f in imgfiles]
+    imgs = imgs = [imread(f)[..., :3] / 255. for f in tqdm.tqdm(imgfiles,desc=f'loading LLFF Dataset from {basedir}')]
     imgs = np.stack(imgs, -1)
 
     print('Loaded image data', imgs.shape, poses[:, -1, 0])

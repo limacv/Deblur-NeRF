@@ -237,6 +237,7 @@ class NeRFAll(nn.Module):
                                              use_z_order=True,
                                              device='cuda',
                                              basis_type=svox2.__dict__['BASIS_TYPE_SH'])
+            self.ndc_coeffs = dset.ndc_coeffs
             del dset
 
             
@@ -603,9 +604,10 @@ class NeRFAll(nn.Module):
             rgb, depth, acc, extras = self.render(H, W, K, chunk=chunk, rays=rays, c2w=c2w[:3, :4], **render_kwargs)
 
             rgbs.append(rgb)
-            depths.append(depth)
-            if i == 0:
-                print(rgb.shape, depth.shape)
+            if not self.is_plenoxel():    
+                depths.append(depth)
+                if i == 0:
+                    print(rgb.shape, depth.shape)
 
         rgbs = torch.stack(rgbs, 0)
         depths = torch.stack(depths, 0)
@@ -617,6 +619,7 @@ class NeRFAll(nn.Module):
         """
         
         """
+        
         if render_factor != 0:
             # Render downsampled for speed
             H = H // render_factor
@@ -657,18 +660,21 @@ class NeRFAll(nn.Module):
 
             new_rays = new_rays[:, render_point]
             weight = weight[:, render_point]
+            
             rgb, depth, acc, extras = self.render(H, W, K, chunk=chunk, rays=new_rays.reshape(-1, 3, 2),
-                                                  c2w=c2w[:3, :4], **render_kwargs)
+                                                c2w=c2w[:3, :4], **render_kwargs)
 
             rgbs.append(rgb.reshape(H, W, 3))
-            depths.append(depth.reshape(H, W))
-            weights.append(weight.reshape(H, W))
-            if i == 0:
-                print(rgb.shape, depth.shape)
+            if not self.is_plenoxel():
+                depths.append(depth.reshape(H, W))
+                weights.append(weight.reshape(H, W))
+                if i == 0:
+                    print(rgb.shape, depth.shape)
 
         rgbs = torch.stack(rgbs, 0)
-        depths = torch.stack(depths, 0)
-        weights = torch.stack(weights, 0)
+        
+        depths = torch.stack(depths, 0) if not self.is_plenoxel() else None
+        weights = torch.stack(weights, 0) if not self.is_plenoxel() else None
 
         return rgbs, depths, weights
     

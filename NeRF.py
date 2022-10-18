@@ -439,7 +439,7 @@ class NeRFAll(nn.Module):
                 print(f"! [Numerical Error] {k} contains inf.")
         return ret
 
-    def forward(self, H, W, K, chunk=1024 * 32, rays=None, rays_info=None, poses=None, **kwargs):
+    def forward(self, H, W, K, chunk=1024 * 32, rays=None, rays_info=None, poses=None, gt=None, **kwargs):
         """
         render rays or render poses, rays and poses should atleast specify one
         calling model.train() to render rays, where rays, rays_info, should be specified
@@ -448,6 +448,7 @@ class NeRFAll(nn.Module):
         optional args:
         force_naive: when True, will only run the naive NeRF, even if the kernelsnet is specified
 
+        
         """
         # training
         if self.training:
@@ -458,7 +459,7 @@ class NeRFAll(nn.Module):
             if self.kernelsnet is not None and not force_baseline:
                 if self.kernelsnet.require_depth:
                     with torch.no_grad():
-                        rgb, depth, acc, extras = self.render(H, W, K, chunk, rays, **kwargs)
+                        rgb, depth, acc, extras = self.render(H, W, K, chunk, rays,gt=gt,**kwargs)
                         rays_info["ray_depth"] = depth[:, None]
 
                 # time0 = time.time()
@@ -467,7 +468,7 @@ class NeRFAll(nn.Module):
                 ray_num, pt_num = new_rays.shape[:2]
 
                 # time1 = time.time()
-                rgb, depth, _ , extras = self.render(H, W, K, chunk, new_rays.reshape(-1, 3, 2), **kwargs)
+                rgb, depth, _ , extras = self.render(H, W, K, chunk, new_rays.reshape(-1, 3, 2),gt=gt, **kwargs)
                 rgb_pts = rgb.reshape(ray_num, pt_num, 3)
                 
                 # time2 = time.time()
@@ -506,10 +507,10 @@ class NeRFAll(nn.Module):
             else:
                 rgbs, depths = self.render_path(H, W, K, chunk, poses, **kwargs)
             return self.tonemapping(rgbs), depths
-
+   
     def render(self, H, W, K, chunk, rays=None, c2w=None, ndc=True,
                near=0., far=1.,
-               use_viewdirs=False, c2w_staticcam=None,
+               use_viewdirs=False, c2w_staticcam=None, gt=None,
                **kwargs):  # the render function
         """Render rays
             Args:
@@ -555,7 +556,10 @@ class NeRFAll(nn.Module):
         
         if self.is_plenoxel():
             svox2_rays = svox2.Rays(rays_o,rays_d)
-            rgb_map = self.plenoxel.volume_render(svox2_rays)
+            if gt is None:
+                rgb_map = self.plenoxel.volume_render(svox2_rays)
+            else:
+                rgb_map = self.plenoxel.volume_render_fused(svox2_rays,gt)
             return rgb_map, None , None , {'rgb0':None}
             #[IMPLEMENT HERE]
         else:

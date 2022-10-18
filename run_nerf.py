@@ -26,7 +26,7 @@ def train():
 
     args = parser.parse_args()
     
-    # import pdb;pdb.set_trace()
+    
     if len(args.torch_hub_dir) > 0:
         print(f"Change torch hub cache to {args.torch_hub_dir}")
         torch.hub.set_dir(args.torch_hub_dir)
@@ -356,12 +356,13 @@ def train():
         if i == args.kernel_start_iter:
             torch.cuda.empty_cache()
         
+        target_rgb = iter_data['rgbsf'].squeeze(-2)
 
         rgb, rgb0, extra_loss = nerf(H, W, K, chunk=args.chunk,
-                                     rays=batch_rays, rays_info=iter_data,
-                                     retraw=True, force_naive=i < args.kernel_start_iter,
-                                     **render_kwargs_train)
-
+                                    rays=batch_rays, rays_info=iter_data,
+                                    retraw=True, force_naive=i < args.kernel_start_iter,gt=target_rgb,
+                                    **render_kwargs_train)
+        
         # Compute Losses
         # =====================
         
@@ -369,8 +370,11 @@ def train():
         if args.plenoxel:
             #copy-n-paste! [TODO] re-organize this
 
+            plenoxel_model = nerf.plenoxel
+
+
             if args.lr_fg_begin_step > 0 and i == args.lr_fg_begin_step:
-                nerf.density_data.data[:] = args.init_sigma
+                plenoxel_model.density_data.data[:] = args.init_sigma
             lr_sigma = lr_sigma_func(i) * lr_sigma_factor
             lr_sh = lr_sh_func(i) * lr_sh_factor
             lr_basis = lr_basis_func(i - args.lr_basis_begin_step) * lr_basis_factor
@@ -380,63 +384,64 @@ def train():
                 lr_sigma = args.lr_sigma * lr_sigma_factor
                 lr_sh = args.lr_sh * lr_sh_factor
                 lr_basis = args.lr_basis * lr_basis_factor
+
+            
             mse = F.mse_loss(rgb, target_rgb)
 
             # Stats
             mse_num : float = mse.detach().item()
             psnr = -10.0 * math.log10(mse_num)
             # Apply TV/Sparsity regularizers
-            if args.lambda_tv > 0.0:
-                #  with Timing("tv_inpl"):
-                nerf.inplace_tv_grad(nerf.density_data.grad,
-                        scaling=args.lambda_tv,
-                        sparse_frac=args.tv_sparsity,
-                        logalpha=args.tv_logalpha,
-                        ndc_coeffs=nerf.ndc_coeffs,
-                        contiguous=args.tv_contiguous)
-            if args.lambda_tv_sh > 0.0:
-                #  with Timing("tv_color_inpl"):
-                nerf.inplace_tv_color_grad(nerf.sh_data.grad,
-                        scaling=args.lambda_tv_sh,
-                        sparse_frac=args.tv_sh_sparsity,
-                        ndc_coeffs=nerf.ndc_coeffs,
-                        contiguous=args.tv_contiguous)
-            if args.lambda_tv_lumisphere > 0.0:
-                nerf.inplace_tv_lumisphere_grad(nerf.sh_data.grad,
-                        scaling=args.lambda_tv_lumisphere,
-                        dir_factor=args.tv_lumisphere_dir_factor,
-                        sparse_frac=args.tv_lumisphere_sparsity,
-                        ndc_coeffs=nerf.ndc_coeffs)
-            if args.lambda_l2_sh > 0.0:
-                nerf.inplace_l2_color_grad(nerf.sh_data.grad,
-                        scaling=args.lambda_l2_sh)
-            if nerf.use_background and (args.lambda_tv_background_sigma > 0.0 or args.lambda_tv_background_color > 0.0):
-                nerf.inplace_tv_background_grad(nerf.background_data.grad,
-                        scaling=args.lambda_tv_background_color,
-                        scaling_density=args.lambda_tv_background_sigma,
-                        sparse_frac=args.tv_background_sparsity,
-                        contiguous=args.tv_contiguous)
-            if args.lambda_tv_basis > 0.0:
-                tv_basis = nerf.tv_basis()
-                loss_tv_basis = tv_basis * args.lambda_tv_basis
-                loss_tv_basis.backward()
+            # if args.lambda_tv > 0.0:
+            #     #  with Timing("tv_inpl"):
+            #     plenoxel_model.inplace_tv_grad(plenoxel_model.density_data.grad,
+            #             scaling=args.lambda_tv,
+            #             sparse_frac=args.tv_sparsity,
+            #             logalpha=args.tv_logalpha,
+            #             ndc_coeffs=nerf.ndc_coeffs,
+            #             contiguous=args.tv_contiguous)
+            # if args.lambda_tv_sh > 0.0:
+            #     #  with Timing("tv_color_inpl"):
+            #     plenoxel_model.inplace_tv_color_grad(plenoxel_model.sh_data.grad,
+            #             scaling=args.lambda_tv_sh,
+            #             sparse_frac=args.tv_sh_sparsity,
+            #             ndc_coeffs=nerf.ndc_coeffs,
+            #             contiguous=args.tv_contiguous)
+            # if args.lambda_tv_lumisphere > 0.0:
+            #     plenoxel_model.inplace_tv_lumisphere_grad(plenoxel_model.sh_data.grad,
+            #             scaling=args.lambda_tv_lumisphere,
+            #             dir_factor=args.tv_lumisphere_dir_factor,
+            #             sparse_frac=args.tv_lumisphere_sparsity,
+            #             ndc_coeffs=nerf.ndc_coeffs)
+            # if args.lambda_l2_sh > 0.0:
+            #     plenoxel_model.inplace_l2_color_grad(plenoxel_model.sh_data.grad,
+            #             scaling=args.lambda_l2_sh)
+            # if plenoxel_model.use_background and (args.lambda_tv_background_sigma > 0.0 or args.lambda_tv_background_color > 0.0):
+            #     plenoxel_model.inplace_tv_background_grad(plenoxel_model.background_data.grad,
+            #             scaling=args.lambda_tv_background_color,
+            #             scaling_density=args.lambda_tv_background_sigma,
+            #             sparse_frac=args.tv_background_sparsity,
+            #             contiguous=args.tv_contiguous)
+            # if args.lambda_tv_basis > 0.0:
+            #     tv_basis = plenoxel_model.tv_basis()
+            #     loss_tv_basis = tv_basis * args.lambda_tv_basis
+            #     loss_tv_basis.backward()
             #  print('nz density', torch.count_nonzero(grid.sparse_grad_indexer).item(),
             #        ' sh', torch.count_nonzero(grid.sparse_sh_grad_indexer).item())
 
             # Manual SGD/rmsprop step
             if i >= args.lr_fg_begin_step:
-                nerf.optim_density_step(lr_sigma, beta=args.rms_beta, optim=args.sigma_optim)
-                nerf.optim_sh_step(lr_sh, beta=args.rms_beta, optim=args.sh_optim)
-            if nerf.use_background:
-                nerf.optim_background_step(lr_sigma_bg, lr_color_bg, beta=args.rms_beta, optim=args.bg_optim)
+                plenoxel_model.optim_density_step(lr_sigma, beta=args.rms_beta, optim=args.sigma_optim)
+                plenoxel_model.optim_sh_step(lr_sh, beta=args.rms_beta, optim=args.sh_optim)
+            if plenoxel_model.use_background:
+                plenoxel_model.optim_background_step(lr_sigma_bg, lr_color_bg, beta=args.rms_beta, optim=args.bg_optim)
             if i >= args.lr_basis_begin_step:
-                if nerf.basis_type == svox2.BASIS_TYPE_3D_TEXTURE:
-                    nerf.optim_basis_step(lr_basis, beta=args.rms_beta, optim=args.basis_optim)
+                if plenoxel_model.basis_type == svox2.BASIS_TYPE_3D_TEXTURE:
+                    plenoxel_model.optim_basis_step(lr_basis, beta=args.rms_beta, optim=args.basis_optim)
                 # elif nerf.basis_type == svox2.BASIS_TYPE_MLP:
                 #     optim_basis_mlp.step()
                 #     optim_basis_mlp.zero_grad()
         else:
-            target_rgb = iter_data['rgbsf'].squeeze(-2)
             img_loss = img2mse(rgb, target_rgb)
             loss = img_loss
             psnr = mse2psnr(img_loss)

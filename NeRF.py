@@ -453,7 +453,7 @@ class NeRFAll(nn.Module):
         # training
         if self.training:
             assert rays is not None, "Please specify rays when in the training mode"
-            
+           
             force_baseline = kwargs.pop("force_naive", True)
             # kernel mode, run multiple rays to get result of one ray
             if self.kernelsnet is not None and not force_baseline:
@@ -492,7 +492,7 @@ class NeRFAll(nn.Module):
 
                 return rgb, rgb0, other_loss
             else:
-                rgb, depth, acc, extras = self.render(H, W, K, chunk, rays, **kwargs)
+                rgb, depth, acc, extras = self.render(H, W, K, chunk, rays,gt=gt, **kwargs)
                 rgb0 = extras['rgb0']
                 if rgb0 is not None:
                     return self.tonemapping(rgb), self.tonemapping(rgb0), {}

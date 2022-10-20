@@ -1,7 +1,7 @@
 num_gpu = 1
 expname = blurball_full
 basedir = ./log/blurball_full
-datadir = /mnt/hdd3/jeongtaekoh/deblurnerf_dataset/real_camera_motion_blur/blurball
+datadir = /home/taek/dataset/deblurnerf_dataset/real_camera_motion_blur/blurball
 tbdir = ./log/blurball_full/tb
 dataset_type = llff
 factor = 4
@@ -42,11 +42,11 @@ tone_mapping_type = gamma
 
 render_rmnearplane = 10
 
-reso = "[[256, 256, 128], [512, 512, 128]]"
+reso = "[[256,256,128],[512,512,128]]"
 upsamp_every = 38400
 lr_sigma = 3e1
 lr_sh = 1e-2
-thresh_type = "sigma"
+thresh_type = sigma
 density_thresh = 5
 lambda_tv = 5e-4
 lambda_tv_sh = 5e-3

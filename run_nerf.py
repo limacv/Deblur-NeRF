@@ -390,6 +390,7 @@ def train():
 
             # Stats
             mse_num : float = mse.detach().item()
+           
             psnr = -10.0 * math.log10(mse_num)
             # Apply TV/Sparsity regularizers
             # if args.lambda_tv > 0.0:
@@ -552,14 +553,16 @@ def train():
 
             print('Saved test set')
 
-        if i % args.i_tensorboard == 0:
-            tensorboard.add_scalar("Loss", loss.item(), global_step)
-            tensorboard.add_scalar("PSNR", psnr.item(), global_step)
+        if i % args.i_tensorboard == 0 :
+            #[TODO] Implment here for plenoxel
+
+            tensorboard.add_scalar("Loss", mse_num if args.plenoxel else loss.item(), global_step)
+            tensorboard.add_scalar("PSNR", psnr    if args.plenoxel else psnr.item(), global_step)
             for k, v in extra_loss.items():
                 tensorboard.add_scalar(k, v.item(), global_step)
 
         if i % args.i_print == 0:
-            print(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
+            print(f"[TRAIN] Iter: {i} Loss: {mse_num if args.plenoxel else loss.item()}  PSNR: {psnr if args.plenoxel else psnr.item()}")
 
         global_step += 1
 

@@ -237,6 +237,12 @@ class NeRFAll(nn.Module):
                                              use_z_order=True,
                                              device='cuda',
                                              basis_type=svox2.__dict__['BASIS_TYPE_SH'])
+            
+            self.plenoxel.sh_data.data[:] = 0.0
+            self.plenoxel.density_data.data[:] = 0.0 if args.lr_fg_begin_step > 0 else args.init_sigma
+
+            if self.plenoxel.use_background:
+                self.plenoxel.background_data.data[..., -1] = args.init_sigma_bg
             self.ndc_coeffs = dset.ndc_coeffs
             del dset
 
@@ -555,6 +561,8 @@ class NeRFAll(nn.Module):
         rays_d = torch.reshape(rays_d, [-1, 3]).float()
         
         if self.is_plenoxel():
+            
+            rays_d = rays_d / rays_d.norm(dim=-1).view(-1,1)
             svox2_rays = svox2.Rays(rays_o,rays_d)
             if gt is None:
                 rgb_map = self.plenoxel.volume_render(svox2_rays)

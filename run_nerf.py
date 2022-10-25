@@ -357,7 +357,7 @@ def train():
             torch.cuda.empty_cache()
         
         target_rgb = iter_data['rgbsf'].squeeze(-2)
-
+        import pdb;pdb.set_trace()
         rgb, rgb0, extra_loss = nerf(H, W, K, chunk=args.chunk,
                                     rays=batch_rays, rays_info=iter_data,
                                     retraw=True, force_naive=i < args.kernel_start_iter,gt=target_rgb,
@@ -372,7 +372,7 @@ def train():
 
             plenoxel_model = nerf.plenoxel
 
-
+ 
             if args.lr_fg_begin_step > 0 and i == args.lr_fg_begin_step:
                 plenoxel_model.density_data.data[:] = args.init_sigma
             lr_sigma = lr_sigma_func(i) * lr_sigma_factor
@@ -432,6 +432,7 @@ def train():
 
             # Manual SGD/rmsprop step
             if i >= args.lr_fg_begin_step:
+               
                 plenoxel_model.optim_density_step(lr_sigma, beta=args.rms_beta, optim=args.sigma_optim)
                 plenoxel_model.optim_sh_step(lr_sh, beta=args.rms_beta, optim=args.sh_optim)
             if plenoxel_model.use_background:
@@ -478,11 +479,17 @@ def train():
         # Rest is logging
         if i % args.i_weights == 0:
             path = os.path.join(basedir, expname, '{:06d}.tar'.format(i))
-            torch.save({
-                'global_step': global_step,
-                'network_state_dict': nerf.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, path)
+            if args.plenoxel:
+                torch.save({
+                    'global_step': global_step,
+                    'network_state_dict': nerf.state_dict(),
+                }, path)
+            else:
+                torch.save({
+                    'global_step': global_step,
+                    'network_state_dict': nerf.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, path)
             print('Saved checkpoints at', path)
 
         if i % args.i_video == 0 and i > 0:
@@ -562,7 +569,9 @@ def train():
                 tensorboard.add_scalar(k, v.item(), global_step)
 
         if i % args.i_print == 0:
-            print(f"[TRAIN] Iter: {i} Loss: {mse_num if args.plenoxel else loss.item()}  PSNR: {psnr if args.plenoxel else psnr.item()}")
+            print(f"[TRAIN] Iter: {i} Loss: {mse_num if args.plenoxel else loss.item():.4f}  PSNR: {psnr if args.plenoxel else psnr.item():.5f}")
+            if args.plenoxel:
+                print(f"        lr_sigma: {lr_sigma:.4f} lr_sh: {lr_sh:.4f}")
 
         global_step += 1
 

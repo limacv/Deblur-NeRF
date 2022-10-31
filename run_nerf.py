@@ -20,6 +20,8 @@ DEBUG = False
 import option_deblurnerf
 import option_plenoxel
 
+from alexyu_svox2_utils import convert_to_ndc
+
 def train():
     parser = option_deblurnerf.config_parser()
     parser = option_plenoxel.config_parser(parser)
@@ -40,6 +42,7 @@ def train():
                                                                   path_epi=args.render_epi)
         hwf = poses[0, :3, -1]
         poses = poses[:, :3, :4]
+        
         print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
         if not isinstance(i_test, list):
             i_test = [i_test]
@@ -59,6 +62,7 @@ def train():
         else:
             near = 0.
             far = 1.
+        
         print('NEAR FAR', near, far)
     else:
         print('Unknown dataset type', args.dataset_type, 'exiting')
@@ -134,10 +138,10 @@ def train():
     nerf = NeRFAll(args, kernelnet)
 #    nerf = nn.DataParallel(nerf, list(range(args.num_gpu)))
     
-    
+    # If plenoxel, load plenoxel version lr scheduler
     if args.plenoxel:
         from alexyu_svox2_utils import get_expon_lr_func
-
+        
         lr_sigma_func = get_expon_lr_func(args.lr_sigma, args.lr_sigma_final, args.lr_sigma_delay_steps,
                                         args.lr_sigma_delay_mult, args.lr_sigma_decay_steps)
         lr_sh_func = get_expon_lr_func(args.lr_sh, args.lr_sh_final, args.lr_sh_delay_steps,
@@ -175,7 +179,8 @@ def train():
 
         start = ckpt['global_step']
         if args.plenoxel:
-            #[TODO] implement here
+            #checkpoitn mechanism for plenoxel
+            #[TODO taekkii] implement here
             print("No implementation for plenoxel so far")
             print("Ignoring ckpt....")
         else:
@@ -301,7 +306,16 @@ def train():
     rays = np.stack([get_rays_np(hei, wid, k_train, p) for p in poses[:, :3, :4]], 0)  # [N, ro+rd, H, W, 3]
     rays = np.transpose(rays, [0, 2, 3, 1, 4])
     train_datas['rays'] = rays[i_train].reshape(-1, 2, 3)
+    
+    #plenoxel-style ndc[z=-1] coordinates
+    # if args.plenoxel:
 
+    #     ori_ndc , dir_ndc = convert_to_ndc(torch.from_numpy(train_datas['rays'][:,0,:]),
+    #                                        torch.from_numpy(train_datas['rays'][:,1,:]),
+    #                                        ndc_coeffs=(2*K[0,0]/wid , 2*K[1,1]/hei ))
+    #     train_datas['rays'][:,0,:] = ori_ndc
+    #     train_datas['rays'][:,1,:] = dir_ndc
+        
     xs, ys = np.meshgrid(np.arange(wid, dtype=np.float32), np.arange(hei, dtype=np.float32), indexing='xy')
     xs = np.tile((xs[None, ...] + HALF_PIX) * W / wid, [num_img, 1, 1])
     ys = np.tile((ys[None, ...] + HALF_PIX) * H / hei, [num_img, 1, 1])
@@ -357,7 +371,8 @@ def train():
             torch.cuda.empty_cache()
         
         target_rgb = iter_data['rgbsf'].squeeze(-2)
-        import pdb;pdb.set_trace()
+        
+        
         rgb, rgb0, extra_loss = nerf(H, W, K, chunk=args.chunk,
                                     rays=batch_rays, rays_info=iter_data,
                                     retraw=True, force_naive=i < args.kernel_start_iter,gt=target_rgb,
@@ -368,8 +383,9 @@ def train():
         
 
         if args.plenoxel:
-            #copy-n-paste! [TODO] re-organize this
-
+            #copy-n-paste! [taekkii TODO] re-organize this
+            
+            #run lr-schedulers
             plenoxel_model = nerf.plenoxel
 
  
@@ -430,6 +446,8 @@ def train():
             #  print('nz density', torch.count_nonzero(grid.sparse_grad_indexer).item(),
             #        ' sh', torch.count_nonzero(grid.sparse_sh_grad_indexer).item())
 
+
+            # run plenoxel optimizers
             # Manual SGD/rmsprop step
             if i >= args.lr_fg_begin_step:
                

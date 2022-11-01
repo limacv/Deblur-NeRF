@@ -393,7 +393,7 @@ def train():
                 lr_sigma = args.lr_sigma * lr_sigma_factor
                 lr_sh = args.lr_sh * lr_sh_factor
                 lr_basis = args.lr_basis * lr_basis_factor
-
+            
             
             mse = F.mse_loss(rgb, target_rgb)
 
@@ -401,6 +401,8 @@ def train():
             mse_num : float = mse.detach().item()
            
             psnr = -10.0 * math.log10(mse_num)
+            if i % 5000==0:
+                import pdb;pdb.set_trace()
             # Apply TV/Sparsity regularizers
             # if args.lambda_tv > 0.0:
             #     #  with Timing("tv_inpl"):
@@ -506,9 +508,11 @@ def train():
         if i % args.i_video == 0 and i > 0:
             #[taekkii]VIDEO RENDERING IS NOT IMPLEMENTED YET
             # Turn on testing mode
+            #import pdb;pdb.set_trace()
             with torch.no_grad():
                 nerf.eval()
                 rgbs, disps = nerf(H, W, K, args.chunk, poses=render_poses, render_kwargs=render_kwargs_test)
+                rgbs = rgbs.reshape(-1,H,W,3)
             
             #print('Done, saving', rgbs.shape, disps.shape)
             print("done")
@@ -523,7 +527,7 @@ def train():
 
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
             #temporarily disables disp map for plenoxel
-            if not args.pleonxel:
+            if not args.plenoxel:
                 imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / disps.max()), fps=30, quality=8)
 
             # if args.use_viewdirs:

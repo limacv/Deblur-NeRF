@@ -25,6 +25,21 @@ def convert_to_ndc(origins, directions, ndc_coeffs, near: float = 1.0):
     directions = torch.stack([d0, d1, d2], -1)
     return origins, directions
 
+def setup_render_opts(opt, args):
+    """
+    Pass render arguments to the SparseGrid renderer options
+    """
+    opt.step_size = args.step_size
+    opt.sigma_thresh = args.sigma_thresh
+    opt.stop_thresh = args.stop_thresh
+    opt.background_brightness = args.background_brightness
+    opt.backend = args.renderer_backend
+    opt.random_sigma_std = args.random_sigma_std
+    opt.random_sigma_std_background = args.random_sigma_std_background
+    opt.last_sample_opaque = args.last_sample_opaque
+    opt.near_clip = args.near_clip
+    opt.use_spheric_clip = args.use_spheric_clip
+
 def get_expon_lr_func(
     lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
 ):

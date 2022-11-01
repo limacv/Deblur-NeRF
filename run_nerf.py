@@ -366,7 +366,6 @@ def train():
         
         target_rgb = iter_data['rgbsf'].squeeze(-2)
         
-        import pdb;pdb.set_trace()
         rgb, rgb0, extra_loss = nerf(H, W, K, chunk=args.chunk,
                                     rays=batch_rays, rays_info=iter_data,
                                     retraw=True, force_naive=i < args.kernel_start_iter,gt=target_rgb,

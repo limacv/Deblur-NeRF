@@ -243,6 +243,13 @@ class NeRFAll(nn.Module):
             self.plenoxel.sh_data.data[:] = 0.0
             self.plenoxel.density_data.data[:] = 0.0 if args.lr_fg_begin_step > 0 else args.init_sigma
 
+            #[11/1 taekkii] some missing inits on plenoxel original code. 
+            self.plenoxel.requires_grad_(True)
+            
+            import alexyu_svox2_utils
+            alexyu_svox2_utils.setup_render_opts(self.plenoxel.opt, args)
+            print('Render options', self.plenoxel.opt)
+
             #looks like useless
             if self.plenoxel.use_background:
                 self.plenoxel.background_data.data[..., -1] = args.init_sigma_bg
@@ -571,13 +578,19 @@ class NeRFAll(nn.Module):
         #if plenoxel is being used
         if self.is_plenoxel():
             #make plenoxel-style ray class
-            svox2_rays = svox2.Rays(rays_o,rays_d)
+            svox2_rays = svox2.Rays(rays_o.cuda(),rays_d.cuda())
             #if gt is not provided, just forward
+            
             if gt is None:
                 rgb_map = self.plenoxel.volume_render(svox2_rays)
             #if we have gt, do forward-backward
             else:
-                rgb_map = self.plenoxel.volume_render_fused(svox2_rays,gt)
+                #[TEMPORARY] Plenoxel style argument are forcefully applied. 
+                #[TODO taekkii] reconsider arguments
+                rgb_map = self.plenoxel.volume_render_fused(svox2_rays,gt,
+                                                            beta_loss=kwargs.get('lambda_beta',0.0),
+                                                            sparsity_loss=kwargs.get('lambda_sparsity',1e-12),
+                                                            randomize=kwargs.get('enable_random',False) )
             return rgb_map, None , None , {'rgb0':None}
         else:
             near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
@@ -632,7 +645,7 @@ class NeRFAll(nn.Module):
                     print(rgb.shape, depth.shape)
 
         rgbs = torch.stack(rgbs, 0)
-        
+
         #Temporarily disable depth for plenoxel 
         if not self.is_plenoxel():
             depths = torch.stack(depths, 0)

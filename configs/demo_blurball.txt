@@ -1,7 +1,7 @@
 num_gpu = 1
 expname = blurball_full
 basedir = ./log/blurball_full
-datadir = /home/taek/dataset/deblurnerf_dataset/real_camera_motion_blur/blurball
+datadir = ./data/real_camera_motion_blur/blurball
 tbdir = ./log/blurball_full/tb
 dataset_type = llff
 factor = 4

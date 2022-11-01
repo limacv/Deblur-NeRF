@@ -20,7 +20,8 @@ DEBUG = False
 import option_deblurnerf
 import option_plenoxel
 
-from alexyu_svox2_utils import convert_to_ndc
+#"turns out that we don't need this"
+#from alexyu_svox2_utils import convert_to_ndc
 
 def train():
     parser = option_deblurnerf.config_parser()
@@ -307,14 +308,7 @@ def train():
     rays = np.transpose(rays, [0, 2, 3, 1, 4])
     train_datas['rays'] = rays[i_train].reshape(-1, 2, 3)
     
-    #plenoxel-style ndc[z=-1] coordinates
-    # if args.plenoxel:
-
-    #     ori_ndc , dir_ndc = convert_to_ndc(torch.from_numpy(train_datas['rays'][:,0,:]),
-    #                                        torch.from_numpy(train_datas['rays'][:,1,:]),
-    #                                        ndc_coeffs=(2*K[0,0]/wid , 2*K[1,1]/hei ))
-    #     train_datas['rays'][:,0,:] = ori_ndc
-    #     train_datas['rays'][:,1,:] = dir_ndc
+    
         
     xs, ys = np.meshgrid(np.arange(wid, dtype=np.float32), np.arange(hei, dtype=np.float32), indexing='xy')
     xs = np.tile((xs[None, ...] + HALF_PIX) * W / wid, [num_img, 1, 1])
@@ -372,7 +366,7 @@ def train():
         
         target_rgb = iter_data['rgbsf'].squeeze(-2)
         
-        
+        import pdb;pdb.set_trace()
         rgb, rgb0, extra_loss = nerf(H, W, K, chunk=args.chunk,
                                     rays=batch_rays, rays_info=iter_data,
                                     retraw=True, force_naive=i < args.kernel_start_iter,gt=target_rgb,
@@ -511,12 +505,14 @@ def train():
             print('Saved checkpoints at', path)
 
         if i % args.i_video == 0 and i > 0:
+            #[taekkii]VIDEO RENDERING IS NOT IMPLEMENTED YET
             # Turn on testing mode
             with torch.no_grad():
                 nerf.eval()
                 rgbs, disps = nerf(H, W, K, args.chunk, poses=render_poses, render_kwargs=render_kwargs_test)
             
-            print('Done, saving', rgbs.shape, disps.shape)
+            #print('Done, saving', rgbs.shape, disps.shape)
+            print("done")
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
             rgbs = (rgbs - rgbs.min()) / (rgbs.max() - rgbs.min())
             rgbs = rgbs.cpu().numpy()
@@ -527,6 +523,7 @@ def train():
             # disps_max = disps.reshape(-1)[np.argpartition(disps.reshape(-1), disps_max_idx)[disps_max_idx]]
 
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
+            #temporarily disables disp map for plenoxel
             if not args.pleonxel:
                 imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / disps.max()), fps=30, quality=8)
 

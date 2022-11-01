@@ -632,7 +632,10 @@ class NeRFAll(nn.Module):
                     print(rgb.shape, depth.shape)
 
         rgbs = torch.stack(rgbs, 0)
-        depths = torch.stack(depths, 0)
+        
+        #Temporarily disable depth for plenoxel 
+        if not self.is_plenoxel():
+            depths = torch.stack(depths, 0)
 
         return rgbs, depths
 

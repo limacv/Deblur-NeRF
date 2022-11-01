@@ -538,6 +538,8 @@ def train():
             #     imageio.mimwrite(moviebase + 'rgb_still.mp4', to8b(rgbs_still), fps=30, quality=8)
 
         if i % args.i_testset == 0 and i > 0:
+
+            import pdb;pdb.set_trace()
             testsavedir = os.path.join(basedir, expname, 'testset_{:06d}'.format(i))
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', poses.shape)
@@ -549,6 +551,7 @@ def train():
                 rgbs, _ = nerf(H, W, K, args.chunk, poses=torch.cat([poses, dummy_poses], dim=0).cuda(),
                                render_kwargs=render_kwargs_test)
                 rgbs = rgbs[:len(rgbs) - dummy_num]
+                rgbs = rgbs.reshape()
                 rgbs_save = rgbs  # (rgbs - rgbs.min()) / (rgbs.max() - rgbs.min())
                 # saving
                 for rgb_idx, rgb in enumerate(rgbs_save):

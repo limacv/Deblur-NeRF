@@ -1,6 +1,7 @@
 import numpy as np
 import os, imageio
 
+import tqdm
 
 ########## Slightly modified version of LLFF data loading code 
 ##########  see https://github.com/Fyusion/LLFF for original
@@ -58,6 +59,7 @@ def _minify(basedir, factors=[], resolutions=[]):
 
 
 def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
+    
     poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
     poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1, 2, 0])
     bds = poses_arr[:, -2:].transpose([1, 0])
@@ -99,7 +101,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         else:
             return imageio.imread(f)
 
-    imgs = imgs = [imread(f)[..., :3] / 255. for f in imgfiles]
+    imgs = imgs = [imread(f)[..., :3] / 255. for f in tqdm.tqdm(imgfiles,desc=f'loading LLFF Dataset from {basedir}')]
     imgs = np.stack(imgs, -1)
 
     print('Loaded image data', imgs.shape, poses[:, -1, 0])
@@ -239,6 +241,8 @@ def spherify_poses(poses, bds):
 
 
 def load_llff_data(args, basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_epi=False):
+
+
     poses, bds, imgs = _load_data(basedir, factor=factor)  # factor=8 downsamples original imgs by 8x
     print('Loaded', basedir, bds.min(), bds.max())
 
@@ -253,7 +257,7 @@ def load_llff_data(args, basedir, factor=8, recenter=True, bd_factor=.75, spheri
     sc = 1. if bd_factor is None else 1. / (bds.min() * bd_factor)
     poses[:, :3, 3] *= sc
     bds *= sc
-
+    
     if recenter:
         poses = recenter_poses(poses)
 

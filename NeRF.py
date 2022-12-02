@@ -4,6 +4,7 @@ from run_nerf_helpers import *
 import os
 import imageio
 import time
+import svox2
 
 
 def init_linear_weights(m):
@@ -216,23 +217,64 @@ class NeRFAll(nn.Module):
         self.output_ch = 5 if args.N_importance > 0 else 4
 
         skips = [4]
-        self.mlp_coarse = NeRF(
-            D=args.netdepth, W=args.netwidth,
-            input_ch=self.input_ch, output_ch=self.output_ch, skips=skips,
-            input_ch_views=self.input_ch_views, use_viewdirs=args.use_viewdirs)
+        #Plenoxel option
+        if args.plenoxel:
+            
+            assert torch.cuda.is_available()
+            
 
-        self.mlp_fine = None
-        if args.N_importance > 0:
-            self.mlp_fine = NeRF(
-                D=args.netdepth_fine, W=args.netwidth_fine,
+            import alexyu_svox2_llff_dataset as svox_llff
+            import json
+            #load resolution
+            reso_list = json.loads(args.reso)
+            
+            #TEMPORARY PART: load Plenoxel-github-version LLFFDataset just to get scene_center/scene_radius 
+            dset = svox_llff.LLFFDataset(args.datadir,split='train',device='cuda')
+
+            self.plenoxel = svox2.SparseGrid(reso=reso_list[0],
+                                             center=dset.scene_center,
+                                             radius=dset.scene_radius,
+                                             use_sphere_bound=False,
+                                             basis_dim=9,
+                                             use_z_order=True,
+                                             device='cuda',
+                                             basis_type=svox2.__dict__['BASIS_TYPE_SH'])
+            #initialize sh coefficients/density
+            self.plenoxel.sh_data.data[:] = 0.0
+            self.plenoxel.density_data.data[:] = 0.0 if args.lr_fg_begin_step > 0 else args.init_sigma
+
+            #[11/1 taekkii] some missing inits on plenoxel original code. 
+            self.plenoxel.requires_grad_(True)
+            
+            import alexyu_svox2_utils
+            alexyu_svox2_utils.setup_render_opts(self.plenoxel.opt, args)
+            print('Render options', self.plenoxel.opt)
+
+            #looks like useless
+            if self.plenoxel.use_background:
+                self.plenoxel.background_data.data[..., -1] = args.init_sigma_bg
+            self.ndc_coeffs = dset.ndc_coeffs
+            del dset
+
+            
+        else:
+            self.mlp_coarse = NeRF(
+                D=args.netdepth, W=args.netwidth,
                 input_ch=self.input_ch, output_ch=self.output_ch, skips=skips,
                 input_ch_views=self.input_ch_views, use_viewdirs=args.use_viewdirs)
 
-        activate = {'relu': torch.relu, 'sigmoid': torch.sigmoid, 'exp': torch.exp, 'none': lambda x: x,
-                    'sigmoid1': lambda x: 1.002 / (torch.exp(-x) + 1) - 0.001,
-                    'softplus': lambda x: nn.Softplus()(x - 1)}
-        self.rgb_activate = activate[args.rgb_activate]
-        self.sigma_activate = activate[args.sigma_activate]
+            self.mlp_fine = None
+            if args.N_importance > 0:
+                self.mlp_fine = NeRF(
+                    D=args.netdepth_fine, W=args.netwidth_fine,
+                    input_ch=self.input_ch, output_ch=self.output_ch, skips=skips,
+                    input_ch_views=self.input_ch_views, use_viewdirs=args.use_viewdirs)
+
+            activate = {'relu': torch.relu, 'sigmoid': torch.sigmoid, 'exp': torch.exp, 'none': lambda x: x,
+                        'sigmoid1': lambda x: 1.002 / (torch.exp(-x) + 1) - 0.001,
+                        'softplus': lambda x: nn.Softplus()(x - 1)}
+            self.rgb_activate = activate[args.rgb_activate]
+            self.sigma_activate = activate[args.sigma_activate]
         self.tonemapping = ToneMapping(args.tone_mapping_type)
 
     def mlpforward(self, inputs, viewdirs, mlp, netchunk=1024 * 64):
@@ -315,7 +357,7 @@ class NeRFAll(nn.Module):
             rgb_map = rgb_map + (1. - acc_map[..., None])
 
         return rgb_map, density, acc_map, weights, depth_map
-
+    
     def render_rays(self,
                     ray_batch,
                     N_samples,
@@ -413,7 +455,7 @@ class NeRFAll(nn.Module):
                 print(f"! [Numerical Error] {k} contains inf.")
         return ret
 
-    def forward(self, H, W, K, chunk=1024 * 32, rays=None, rays_info=None, poses=None, **kwargs):
+    def forward(self, H, W, K, chunk=1024 * 32, rays=None, rays_info=None, poses=None, gt=None, **kwargs):
         """
         render rays or render poses, rays and poses should atleast specify one
         calling model.train() to render rays, where rays, rays_info, should be specified
@@ -422,33 +464,39 @@ class NeRFAll(nn.Module):
         optional args:
         force_naive: when True, will only run the naive NeRF, even if the kernelsnet is specified
 
+        [PLENOXEL OPTION]
+        gt: Sending gt as argument if plenoxel is being used. (Plenoxel does forward-calculates loss-backward internally, so need gt)
         """
         # training
         if self.training:
             assert rays is not None, "Please specify rays when in the training mode"
-
+           
             force_baseline = kwargs.pop("force_naive", True)
             # kernel mode, run multiple rays to get result of one ray
             if self.kernelsnet is not None and not force_baseline:
                 if self.kernelsnet.require_depth:
                     with torch.no_grad():
-                        rgb, depth, acc, extras = self.render(H, W, K, chunk, rays, **kwargs)
+                        rgb, depth, acc, extras = self.render(H, W, K, chunk, rays,gt=gt,**kwargs)
                         rays_info["ray_depth"] = depth[:, None]
 
                 # time0 = time.time()
                 new_rays, weight, align_loss = self.kernelsnet(H, W, K, rays, rays_info)
+                
                 ray_num, pt_num = new_rays.shape[:2]
 
                 # time1 = time.time()
-                rgb, depth, acc, extras = self.render(H, W, K, chunk, new_rays.reshape(-1, 3, 2), **kwargs)
+                rgb, depth, _ , extras = self.render(H, W, K, chunk, new_rays.reshape(-1, 3, 2),gt=gt, **kwargs)
                 rgb_pts = rgb.reshape(ray_num, pt_num, 3)
-                rgb0_pts = extras['rgb0'].reshape(ray_num, pt_num, 3)
-
+                
                 # time2 = time.time()
                 rgb = torch.sum(rgb_pts * weight[..., None], dim=1)
-                rgb0 = torch.sum(rgb0_pts * weight[..., None], dim=1)
                 rgb = self.tonemapping(rgb)
-                rgb0 = self.tonemapping(rgb0)
+
+                if extras.get('rgb0',None) is not None:
+                    rgb0_pts = extras['rgb0'].reshape(ray_num, pt_num, 3)
+                    rgb0 = torch.sum(rgb0_pts * weight[..., None], dim=1)
+                    rgb0 = self.tonemapping(rgb0)
+                else: rgb0 = None
 
                 # time3 = time.time()
                 # print(f"Time| kernel: {time1-time0:.5f}, nerf: {time2-time1:.5f}, fuse: {time3-time2}")
@@ -461,9 +509,14 @@ class NeRFAll(nn.Module):
 
                 return rgb, rgb0, other_loss
             else:
-                rgb, depth, acc, extras = self.render(H, W, K, chunk, rays, **kwargs)
-                return self.tonemapping(rgb), self.tonemapping(extras['rgb0']), {}
-
+                rgb, depth, acc, extras = self.render(H, W, K, chunk, rays,gt=gt, **kwargs)
+                rgb0 = extras['rgb0']
+                #rgb0 means coarse rgb in original nerf. plenoxel doesn't have it, so don' need to return rgb0
+                #tonemapping: gamma function
+                if rgb0 is not None:
+                    return self.tonemapping(rgb), self.tonemapping(rgb0), {} 
+                else:
+                    return self.tonemapping(rgb), None, {}
         #  evaluation
         else:
             assert poses is not None, "Please specify poses when in the eval model"
@@ -473,10 +526,10 @@ class NeRFAll(nn.Module):
             else:
                 rgbs, depths = self.render_path(H, W, K, chunk, poses, **kwargs)
             return self.tonemapping(rgbs), depths
-
+   
     def render(self, H, W, K, chunk, rays=None, c2w=None, ndc=True,
                near=0., far=1.,
-               use_viewdirs=False, c2w_staticcam=None,
+               use_viewdirs=False, c2w_staticcam=None, gt=None,
                **kwargs):  # the render function
         """Render rays
             Args:
@@ -501,7 +554,7 @@ class NeRFAll(nn.Module):
               extras: dict with everything returned by render_rays().
             """
         rays_o, rays_d = rays[..., 0], rays[..., 1]
-
+ 
         if use_viewdirs:
             # provide ray directions as input
             viewdirs = rays_d
@@ -519,29 +572,49 @@ class NeRFAll(nn.Module):
         # Create ray batch
         rays_o = torch.reshape(rays_o, [-1, 3]).float()
         rays_d = torch.reshape(rays_d, [-1, 3]).float()
+        #normalize (could be helpful, or not)
+        rays_d = rays_d / rays_d.norm(dim=-1).view(-1,1)
+       
+        #if plenoxel is being used
+        if self.is_plenoxel():
+            #make plenoxel-style ray class
+            svox2_rays = svox2.Rays(rays_o.cuda(),rays_d.cuda())
+            #if gt is not provided, just forward
+            
+            if gt is None:
+                rgb_map = self.plenoxel.volume_render(svox2_rays)
+            #if we have gt, do forward-backward
+            else:
+                #[TEMPORARY] Plenoxel style argument are forcefully applied. 
+                #[TODO taekkii] reconsider arguments
+                rgb_map = self.plenoxel.volume_render_fused(svox2_rays,gt,
+                                                            beta_loss=kwargs.get('lambda_beta',0.0),
+                                                            sparsity_loss=kwargs.get('lambda_sparsity',1e-12),
+                                                            randomize=kwargs.get('enable_random',False) )
+            return rgb_map, None , None , {'rgb0':None}
+        else:
+            near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
+            rays = torch.cat([rays_o, rays_d, near, far], -1)
+            if use_viewdirs:
+                rays = torch.cat([rays, viewdirs], -1)
 
-        near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
-        rays = torch.cat([rays_o, rays_d, near, far], -1)
-        if use_viewdirs:
-            rays = torch.cat([rays, viewdirs], -1)
+            # Batchfy and Render and reshape
+            all_ret = {}
+            for i in range(0, rays.shape[0], chunk):
+                ret = self.render_rays(rays[i:i + chunk], **kwargs)
+                for k in ret:
+                    if k not in all_ret:
+                        all_ret[k] = []
+                    all_ret[k].append(ret[k])
+            all_ret = {k: torch.cat(all_ret[k], 0) for k in all_ret}
 
-        # Batchfy and Render and reshape
-        all_ret = {}
-        for i in range(0, rays.shape[0], chunk):
-            ret = self.render_rays(rays[i:i + chunk], **kwargs)
-            for k in ret:
-                if k not in all_ret:
-                    all_ret[k] = []
-                all_ret[k].append(ret[k])
-        all_ret = {k: torch.cat(all_ret[k], 0) for k in all_ret}
+            for k in all_ret:
+                k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
+                all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
-        for k in all_ret:
-            k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
-            all_ret[k] = torch.reshape(all_ret[k], k_sh)
-
-        k_extract = ['rgb_map', 'depth_map', 'acc_map']
-        ret_list = [all_ret[k] for k in k_extract]
-        ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
+            k_extract = ['rgb_map', 'depth_map', 'acc_map']
+            ret_list = [all_ret[k] for k in k_extract]
+            ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
         return ret_list + [ret_dict]
 
     def render_path(self, H, W, K, chunk, render_poses, render_kwargs, render_factor=0, ):
@@ -565,12 +638,17 @@ class NeRFAll(nn.Module):
             rgb, depth, acc, extras = self.render(H, W, K, chunk=chunk, rays=rays, c2w=c2w[:3, :4], **render_kwargs)
 
             rgbs.append(rgb)
-            depths.append(depth)
-            if i == 0:
-                print(rgb.shape, depth.shape)
+            #Temporarily disable depth for plenoxel 
+            if not self.is_plenoxel():    
+                depths.append(depth)
+                if i == 0:
+                    print(rgb.shape, depth.shape)
 
         rgbs = torch.stack(rgbs, 0)
-        depths = torch.stack(depths, 0)
+
+        #Temporarily disable depth for plenoxel 
+        if not self.is_plenoxel():
+            depths = torch.stack(depths, 0)
 
         return rgbs, depths
 
@@ -579,6 +657,7 @@ class NeRFAll(nn.Module):
         """
         
         """
+        
         if render_factor != 0:
             # Render downsampled for speed
             H = H // render_factor
@@ -619,17 +698,25 @@ class NeRFAll(nn.Module):
 
             new_rays = new_rays[:, render_point]
             weight = weight[:, render_point]
+            
             rgb, depth, acc, extras = self.render(H, W, K, chunk=chunk, rays=new_rays.reshape(-1, 3, 2),
-                                                  c2w=c2w[:3, :4], **render_kwargs)
+                                                c2w=c2w[:3, :4], **render_kwargs)
 
             rgbs.append(rgb.reshape(H, W, 3))
-            depths.append(depth.reshape(H, W))
-            weights.append(weight.reshape(H, W))
-            if i == 0:
-                print(rgb.shape, depth.shape)
+            #temporarily disables depth for plenoxel
+            if not self.is_plenoxel():
+                depths.append(depth.reshape(H, W))
+                weights.append(weight.reshape(H, W))
+                if i == 0:
+                    print(rgb.shape, depth.shape)
 
         rgbs = torch.stack(rgbs, 0)
-        depths = torch.stack(depths, 0)
-        weights = torch.stack(weights, 0)
+        
+        #temporarily disables depth for plenoxel
+        depths = torch.stack(depths, 0) if not self.is_plenoxel() else None
+        weights = torch.stack(weights, 0) if not self.is_plenoxel() else None
 
         return rgbs, depths, weights
+    
+    def is_plenoxel(self):
+        return hasattr(self,'plenoxel')

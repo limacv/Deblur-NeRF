@@ -66,6 +66,11 @@ To make the CRF learnable, change the config to ```tone_mapping_type = learn```.
 By setting ```kernel_type = none```, our implementation runs the original implementation of NeRF.
 
 
+### Generate synthetic dataset
+We released the raw blender files to generate synthetic dataset in the dataset link above.
+Running the script in the blender files gives you synthetic data format.
+To convert them to the llff data format, run python script in ```scripts/synthe2poses.py```. (Some path variables need to be changed)
+
 ### Your own data
 The code digests the same data format as in the original implementation of NeRF (with the only difference being the images maybe blurry). So you can just use their data processing scripts to generate camera poses to ```poses_bounds.npy```.
 
